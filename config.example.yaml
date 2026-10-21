@@ -1,0 +1,53 @@
+# opencode-bridge 配置模板
+#
+# 用法：复制为 config.yaml 后修改（或首次运行自动生成后再编辑）。
+# 除 upstream_api_key 外所有字段都可省略，省略时使用下面注释中的默认值。
+
+# 监听地址。建议保持 127.0.0.1，只允许本机访问。
+# 默认：127.0.0.1:8787
+listen: 127.0.0.1:8787
+
+# 写入 registry 供 Kimi Code 回连本桥的地址由 listen 推导为 http://<listen 主机>:<端口>，
+# 两者不会再对不上。listen 是通配地址（0.0.0.0 / [::]）时推导为 127.0.0.1。
+# Kimi Code 在其他机器上运行、或前面挂了反向代理时，用命令行 --host 覆盖
+# （可写 host、host:port，或完整的 https:// 地址）。
+
+# OpenCode Go 上游地址。
+# 默认：https://opencode.ai
+upstream_base_url: https://opencode.ai
+
+# 上游 API 路径前缀，其后拼接 chat/completions、messages、responses、models。
+# 官方文档与模型目录（models.dev / models.opencode.ai）声明的是 /inference/go/v1；
+# 旧的 /zen/go/v1 目前仍在路由且模型清单一致，但未文档化，不保证长期可用。
+# 默认：/inference/go/v1
+upstream_api_prefix: /inference/go/v1
+
+# OpenCode Go 的真实 API key。只存在于此文件，永远不会发给客户端。
+upstream_api_key: <api-key>
+
+# 桥对外发布的 API key 列表：客户端携带其中任意一个即可通过认证。
+# 留空或省略时，首次启动会自动生成一个并写回本文件。
+# 换发/吊销 key：直接增删列表项后给进程发 SIGHUP 即可热生效，无需重启。
+proxy_api_keys:
+  - <api-key>
+
+# Kimi Code 侧存放发布 key 的环境变量名（写入 registry 的 env 字段）。
+# 客户端需要：export <这个名字>=<列表中任意一个key>
+# 默认：OPENCODE_BRIDGE_API_KEY
+api_key_env_name: OPENCODE_BRIDGE_API_KEY
+
+# 模型元数据目录（registry 的第二数据源，用于判定每个模型的协议和上下文窗口）。
+# 默认：https://models.opencode.ai/api.json
+registry_metadata_url: https://models.opencode.ai/api.json
+
+# registry 内存缓存秒数；上游失败时回退到上次成功缓存。
+# 默认：900
+registry_ttl_seconds: 900
+
+# 请求体大小上限（字节）。
+# 默认：83886080（80 MiB）
+max_body_bytes: 83886080
+
+# 上游读超时（秒）。两次收到数据之间的最大等待，SSE 长流按此判断是否中断。
+# 默认：300
+upstream_timeout_seconds: 300

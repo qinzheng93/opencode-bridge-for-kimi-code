@@ -1,0 +1,8 @@
+# Build output
+/target
+
+# Live config: holds the real upstream API key. Use config.example.yaml as the template.
+/config.yaml
+
+# Release packages
+/dist/

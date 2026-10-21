@@ -1,0 +1,48 @@
+[package]
+name = "opencode-bridge"
+version = "1.1.0"
+edition = "2021"
+description = "Kimi Code -> OpenCode Go API bridge: publishes its own API key, injects a stable x-opencode-session header without breaking upstream KV cache"
+license = "MIT"
+
+[lib]
+name = "opencode_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "opencode-bridge"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+bytes = "1"
+base64 = "0.23"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+getrandom = "0.4"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls-native-roots",
+    "stream",
+    "json",
+    "http2",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_norway = "0.9"
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "signal",
+    "sync",
+    "time",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["chrono"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
