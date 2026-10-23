@@ -56,6 +56,15 @@ pub fn start(config_path: &str, serve_args: &[String]) -> ExitCode {
         let _ = fs::remove_file(&pid_file);
     }
 
+    // First run: the config's directory may not exist yet, and the log file
+    // has to be opened before the child can create anything.
+    if let Some(dir) = log_file.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        if let Err(error) = fs::create_dir_all(dir) {
+            eprintln!("cannot create directory {}: {error}", dir.display());
+            return ExitCode::from(1);
+        }
+    }
+
     let log = match OpenOptions::new().create(true).append(true).open(&log_file) {
         Ok(file) => file,
         Err(error) => {

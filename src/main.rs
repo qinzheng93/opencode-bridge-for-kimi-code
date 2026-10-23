@@ -11,7 +11,8 @@ use tracing_subscriber::fmt::time::ChronoLocal;
 
 use opencode_bridge::app::create_app;
 use opencode_bridge::config::{
-    load_config, load_or_bootstrap, public_base_url, Bootstrap, ConfigStore, UPSTREAM_KEY_ENV,
+    default_config_path, load_config, load_or_bootstrap, public_base_url, Bootstrap, ConfigStore,
+    UPSTREAM_KEY_ENV,
 };
 use opencode_bridge::daemon;
 use opencode_bridge::keygen::{generate_api_key_with_prefix, DEFAULT_KEY_PREFIX};
@@ -54,7 +55,8 @@ impl Default for Command {
 
 #[derive(Args)]
 struct ServeArgs {
-    /// Path to the YAML config file (default: $OPENCODE_BRIDGE_CONFIG, else config.yaml)
+    /// Path to the YAML config file (default: $OPENCODE_BRIDGE_CONFIG, else
+    /// ~/.config/ocbk/config.yaml)
     #[arg(short, long, value_name = "PATH")]
     config: Option<String>,
     /// Host (or host:port, or a full http(s) URL) published in the registry.
@@ -98,7 +100,8 @@ struct StartArgs {
 
 #[derive(Args)]
 struct ConfigArg {
-    /// Path to the YAML config file (default: $OPENCODE_BRIDGE_CONFIG, else config.yaml)
+    /// Path to the YAML config file (default: $OPENCODE_BRIDGE_CONFIG, else
+    /// ~/.config/ocbk/config.yaml)
     #[arg(short, long, value_name = "PATH")]
     config: Option<String>,
 }
@@ -142,11 +145,11 @@ async fn main() -> ExitCode {
     }
 }
 
-/// `-c` flag, else $OPENCODE_BRIDGE_CONFIG, else config.yaml.
+/// `-c` flag, else $OPENCODE_BRIDGE_CONFIG, else `~/.config/ocbk/config.yaml`.
 fn resolve_config_path(flag: Option<String>) -> String {
     flag.or_else(|| std::env::var("OPENCODE_BRIDGE_CONFIG").ok())
         .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| "config.yaml".to_string())
+        .unwrap_or_else(default_config_path)
 }
 
 /// Flags the daemonized `serve` child needs beyond `--config`/`--pid-file`.

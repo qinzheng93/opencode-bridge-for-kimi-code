@@ -113,6 +113,16 @@ impl Default for BridgeConfig {
 /// Name of the environment variable that overrides `upstream_api_key`.
 pub const UPSTREAM_KEY_ENV: &str = "OPENCODE_BRIDGE_UPSTREAM_API_KEY";
 
+/// Default config location when neither `-c` nor `OPENCODE_BRIDGE_CONFIG` is
+/// given: `~/.config/ocbk/config.yaml`. Falls back to the historical
+/// `config.yaml` in the working directory when `$HOME` is unset.
+pub fn default_config_path() -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() => format!("{home}/.config/ocbk/config.yaml"),
+        _ => "config.yaml".to_string(),
+    }
+}
+
 impl BridgeConfig {
     /// Apply the same normalization the Python validators perform.
     fn normalize(mut self) -> Result<Self, String> {
@@ -360,6 +370,16 @@ pub fn write_config(path: &str, config: &BridgeConfig) -> Result<(), ConfigError
         path: path.to_string(),
         source: std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()),
     })?;
+
+    let parent = Path::new(path)
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty());
+    if let Some(dir) = parent {
+        std::fs::create_dir_all(dir).map_err(|source| ConfigError::Write {
+            path: dir.to_string_lossy().into_owned(),
+            source,
+        })?;
+    }
 
     let tmp = format!("{path}.tmp");
     let mut options = OpenOptions::new();
@@ -740,6 +760,15 @@ mod tests {
         assert_eq!(config.proxy_api_keys.len(), 1);
         let reloaded = load_config(&path).expect("reload");
         assert_eq!(reloaded.proxy_api_keys, config.proxy_api_keys);
+    }
+
+    #[test]
+    fn bootstrap_creates_missing_parent_directories() {
+        let base = temp_path("parents");
+        let path = format!("{base}/nested/ocbk/config.yaml");
+        let outcome = load_or_bootstrap(&path).expect("bootstrap into missing dirs");
+        assert!(matches!(outcome, Bootstrap::Created(_)));
+        assert!(load_config(&path).is_ok());
     }
 
     #[test]

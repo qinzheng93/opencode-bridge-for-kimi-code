@@ -17,12 +17,13 @@ OpenCode Go 要求每个推理请求携带稳定的 `x-opencode-session` 头来�
 
 ```bash
 cargo build --release
-cp config.example.yaml config.yaml
-# 编辑 config.yaml：至少填 upstream_api_key（OpenCode Go 的 key）
-./target/release/opencode-bridge serve -c config.yaml --registry-protocols chat
+# 首次运行会自动在 ~/.config/ocbk/config.yaml 生成默认配置（目录不存在会自动创建），
+# 也可以手动创建：cp config.example.yaml ~/.config/ocbk/config.yaml
+# 编辑配置：至少填 upstream_api_key（OpenCode Go 的 key）
+./target/release/opencode-bridge serve --registry-protocols chat
 ```
 
-首次运行如果 `config.yaml` 不存在，桥会按默认值生成一份（含自动生成的 `proxy_api_keys`）并以退出码 2 结束，提示你填上游 key 后重启。
+首次运行如果配置不存在，桥会在 `~/.config/ocbk/config.yaml` 生成一份（含自动生成的 `proxy_api_keys`）并以退出码 2 结束，提示你填上游 key 后重启。
 
 启动横幅会打印一条导入命令，形如：
 
@@ -54,7 +55,7 @@ export OPENCODE_BRIDGE_API_KEY=sk-bridge-...
 
 ## 配置项
 
-所有字段都可省略，省略时使用默认值。`config.yaml` 含真实 key，不要提交到仓库。
+所有字段都可省略，省略时使用默认值。配置默认读取 `~/.config/ocbk/config.yaml`（可用 `-c` 或 `OPENCODE_BRIDGE_CONFIG` 覆盖），含真实 key，注意权限。
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
@@ -92,8 +93,8 @@ opencode-bridge serve -c config.yaml --host https://bridge.example.com
 
 ## 运维
 
-- **daemon 模式**：`opencode-bridge start -c config.yaml` 后台启动并立即返回，`stop` 优雅停止（SIGTERM），`status` 查看状态，`restart` 等价于 stop + start。pid 和日志文件跟随配置文件放在同目录（`config.yaml` → `config.pid` / `config.log`），多份配置可跑多个实例。`start` 接受 `serve` 的全部参数（`--host`、`--log-level`、`--registry-protocols`）。日志追加写入，需要轮转可配 logrotate。
-- **热加载**：改完配置给进程发 `SIGHUP` 即可，无需重启（daemon 模式下 `kill -HUP $(cat config.pid)`）。`proxy_api_keys` 立即生效；`upstream_timeout_seconds` 会重建连接池；`registry_metadata_url` / `registry_ttl_seconds` 在下一次刷新时生效。`listen` 和发布地址是启动时确定的，改了要重启。
+- **daemon 模式**：`opencode-bridge start` 后台启动并立即返回，`stop` 优雅停止（SIGTERM），`status` 查看状态，`restart` 等价于 stop + start。pid 和日志文件跟随配置文件放在同目录（默认 `~/.config/ocbk/config.yaml` → `~/.config/ocbk/config.pid` / `~/.config/ocbk/config.log`），多份配置可跑多个实例。`start` 接受 `serve` 的全部参数（`--host`、`--log-level`、`--registry-protocols`）。日志追加写入，需要轮转可配 logrotate。
+- **热加载**：改完配置给进程发 `SIGHUP` 即可，无需重启（daemon 模式下 `kill -HUP $(cat ~/.config/ocbk/config.pid)`）。`proxy_api_keys` 立即生效；`upstream_timeout_seconds` 会重建连接池；`registry_metadata_url` / `registry_ttl_seconds` 在下一次刷新时生效。`listen` 和发布地址是启动时确定的，改了要重启。
 - **日志**：前台模式输出到 stderr，daemon 模式写入日志文件；本地时间，格式 `2026-10-17 02:31:40,211  INFO ...`；`--log-level debug|info|warning|error`。
 - **生成 key**：`opencode-bridge gen-key [COUNT] [--prefix sk-bridge-] [--json]`。
 - **registry 缓存**：TTL 内直接返回内存缓存；刷新失败时回退到上一次成功的结果（再延长 60 秒），冷缓存且上游不可达时返回 503。模型缺少元数据或上下文窗口时会被跳过并记一条 WARN。
@@ -101,7 +102,7 @@ opencode-bridge serve -c config.yaml --host https://bridge.example.com
 
 ## 安全
 
-- `config.yaml` 保存真实上游 key，已加入 `.gitignore`；权限建议 `chmod 600`。
+- 配置文件保存真实上游 key，自动生成的权限是 `0600`；`~/.config/ocbk/config.yaml` 在 HOME 下，不随仓库分发。
 - 默认只监听 `127.0.0.1`。确实需要对外提供服务时，请自行加反代和 TLS，并用 `--host` 指定对外地址。
 - 客户端 key（`sk-bridge-...`）与上游 key 完全隔离；吊销只需从 `proxy_api_keys` 删掉再发 `SIGHUP`。
 
