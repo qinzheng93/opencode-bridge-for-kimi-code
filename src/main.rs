@@ -13,6 +13,7 @@ use opencode_bridge::app::create_app;
 use opencode_bridge::config::{
     load_config, load_or_bootstrap, public_base_url, Bootstrap, ConfigStore, UPSTREAM_KEY_ENV,
 };
+use opencode_bridge::daemon;
 use opencode_bridge::keygen::{generate_api_key_with_prefix, DEFAULT_KEY_PREFIX};
 use opencode_bridge::proxy::UpstreamRelay;
 use opencode_bridge::registry::{all_wires, parse_protocol_selection, Wire};
@@ -31,8 +32,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the bridge (the default when no subcommand is given).
+    /// Run the bridge in the foreground (the default when no subcommand is given).
     Serve(ServeArgs),
+    /// Start the bridge in the background (daemon mode).
+    Start(StartArgs),
+    /// Stop a background bridge started with `start`.
+    Stop(ConfigArg),
+    /// Show whether a background bridge is running.
+    Status(ConfigArg),
+    /// Restart a background bridge (stop, then start).
+    Restart(StartArgs),
     /// Generate bridge API keys in the format the config expects.
     GenKey(GenKeyArgs),
 }
@@ -64,6 +73,9 @@ struct ServeArgs {
     /// chat, responses, anthropic, or all (default: all)
     #[arg(long, value_name = "LIST", value_parser = parse_protocols)]
     registry_protocols: Option<BTreeSet<Wire>>,
+    /// Written by `start`: the daemon records its pid here once it is bound.
+    #[arg(long, value_name = "PATH", hide = true)]
+    pid_file: Option<String>,
 }
 
 impl Default for ServeArgs {
@@ -73,8 +85,22 @@ impl Default for ServeArgs {
             host: None,
             log_level: "info".to_string(),
             registry_protocols: None,
+            pid_file: None,
         }
     }
+}
+
+#[derive(Args)]
+struct StartArgs {
+    #[command(flatten)]
+    serve: ServeArgs,
+}
+
+#[derive(Args)]
+struct ConfigArg {
+    /// Path to the YAML config file (default: $OPENCODE_BRIDGE_CONFIG, else config.yaml)
+    #[arg(short, long, value_name = "PATH")]
+    config: Option<String>,
 }
 
 #[derive(Args)]
@@ -101,7 +127,49 @@ async fn main() -> ExitCode {
     match Cli::parse().command.unwrap_or_default() {
         Command::GenKey(args) => run_gen_key(&args),
         Command::Serve(args) => run_serve(args).await,
+        Command::Start(args) => run_start(&args.serve),
+        Command::Stop(args) => daemon::stop(&resolve_config_path(args.config)),
+        Command::Status(args) => daemon::status(&resolve_config_path(args.config)),
+        Command::Restart(args) => {
+            let config = resolve_config_path(args.serve.config.clone());
+            let code = daemon::stop(&config);
+            if code == ExitCode::SUCCESS {
+                daemon::start(&config, &serve_extra_args(&args.serve))
+            } else {
+                code
+            }
+        }
     }
+}
+
+/// `-c` flag, else $OPENCODE_BRIDGE_CONFIG, else config.yaml.
+fn resolve_config_path(flag: Option<String>) -> String {
+    flag.or_else(|| std::env::var("OPENCODE_BRIDGE_CONFIG").ok())
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| "config.yaml".to_string())
+}
+
+/// Flags the daemonized `serve` child needs beyond `--config`/`--pid-file`.
+fn serve_extra_args(args: &ServeArgs) -> Vec<String> {
+    let mut extra = Vec::new();
+    if let Some(host) = &args.host {
+        extra.push("--host".to_string());
+        extra.push(host.clone());
+    }
+    extra.push("--log-level".to_string());
+    extra.push(args.log_level.clone());
+    if let Some(selected) = &args.registry_protocols {
+        let mut wires: Vec<&str> = selected.iter().map(|wire| wire.as_str()).collect();
+        wires.sort_unstable();
+        extra.push("--registry-protocols".to_string());
+        extra.push(wires.join(","));
+    }
+    extra
+}
+
+fn run_start(args: &ServeArgs) -> ExitCode {
+    let config = resolve_config_path(args.config.clone());
+    daemon::start(&config, &serve_extra_args(args))
 }
 
 fn run_gen_key(args: &GenKeyArgs) -> ExitCode {
@@ -124,11 +192,7 @@ fn run_gen_key(args: &GenKeyArgs) -> ExitCode {
 async fn run_serve(args: ServeArgs) -> ExitCode {
     init_logging(&args.log_level);
 
-    let config_path = args
-        .config
-        .or_else(|| std::env::var("OPENCODE_BRIDGE_CONFIG").ok())
-        .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| "config.yaml".to_string());
+    let config_path = resolve_config_path(args.config);
 
     let config = match load_or_bootstrap(&config_path) {
         Ok(Bootstrap::Ready(config)) => config,
@@ -220,8 +284,17 @@ async fn run_serve(args: ServeArgs) -> ExitCode {
         }
     };
 
+    // Written only after the bind succeeds, so `start` can treat its
+    // appearance as the readiness signal.
+    if let Some(path) = &args.pid_file {
+        if let Err(error) = std::fs::write(path, format!("{}\n", std::process::id())) {
+            eprintln!("cannot write pid file {path}: {error}");
+            return ExitCode::from(1);
+        }
+    }
+
     let app = create_app(store, relay, args.registry_protocols, public);
-    match axum::serve(listener, app)
+    let code = match axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
     {
@@ -230,7 +303,11 @@ async fn run_serve(args: ServeArgs) -> ExitCode {
             eprintln!("server error: {error}");
             ExitCode::from(1)
         }
+    };
+    if let Some(path) = &args.pid_file {
+        let _ = std::fs::remove_file(path);
     }
+    code
 }
 
 fn install_reload_handler(store: ConfigStore, relay: Arc<UpstreamRelay>, path: String) {

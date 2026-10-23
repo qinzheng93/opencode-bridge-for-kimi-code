@@ -92,8 +92,9 @@ opencode-bridge serve -c config.yaml --host https://bridge.example.com
 
 ## 运维
 
-- **热加载**：改完配置给进程发 `SIGHUP` 即可，无需重启。`proxy_api_keys` 立即生效；`upstream_timeout_seconds` 会重建连接池；`registry_metadata_url` / `registry_ttl_seconds` 在下一次刷新时生效。`listen` 和发布地址是启动时确定的，改了要重启。
-- **日志**：输出到 stderr，本地时间，格式 `2026-10-17 02:31:40,211  INFO ...`；`--log-level debug|info|warning|error`。
+- **daemon 模式**：`opencode-bridge start -c config.yaml` 后台启动并立即返回，`stop` 优雅停止（SIGTERM），`status` 查看状态，`restart` 等价于 stop + start。pid 和日志文件跟随配置文件放在同目录（`config.yaml` → `config.pid` / `config.log`），多份配置可跑多个实例。`start` 接受 `serve` 的全部参数（`--host`、`--log-level`、`--registry-protocols`）。日志追加写入，需要轮转可配 logrotate。
+- **热加载**：改完配置给进程发 `SIGHUP` 即可，无需重启（daemon 模式下 `kill -HUP $(cat config.pid)`）。`proxy_api_keys` 立即生效；`upstream_timeout_seconds` 会重建连接池；`registry_metadata_url` / `registry_ttl_seconds` 在下一次刷新时生效。`listen` 和发布地址是启动时确定的，改了要重启。
+- **日志**：前台模式输出到 stderr，daemon 模式写入日志文件；本地时间，格式 `2026-10-17 02:31:40,211  INFO ...`；`--log-level debug|info|warning|error`。
 - **生成 key**：`opencode-bridge gen-key [COUNT] [--prefix sk-bridge-] [--json]`。
 - **registry 缓存**：TTL 内直接返回内存缓存；刷新失败时回退到上一次成功的结果（再延长 60 秒），冷缓存且上游不可达时返回 503。模型缺少元数据或上下文窗口时会被跳过并记一条 WARN。
 - **`--registry-protocols`**：`chat,responses,anthropic` 的子集或 `all`（默认），只向 Kimi Code 发布选中的协议。
@@ -112,7 +113,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-代码结构：`src/main.rs`（CLI / 启动 / SIGHUP / 优雅停机）、`config.rs`（配置解析与校验）、`app.rs`（路由与认证）、`proxy.rs`（上游转发与流式）、`registry.rs`（模型目录合成与缓存）、`session.rs`（会话 ID 推导）、`keygen.rs`（key 生成）。
+代码结构：`src/main.rs`（CLI / 启动 / SIGHUP / 优雅停机）、`daemon.rs`（start/stop/status 后台控制）、`config.rs`（配置解析与校验）、`app.rs`（路由与认证）、`proxy.rs`（上游转发与流式）、`registry.rs`（模型目录合成与缓存）、`session.rs`（会话 ID 推导）、`keygen.rs`（key 生成）。
 
 ## License
 

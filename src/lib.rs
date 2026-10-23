@@ -42,6 +42,7 @@
 
 pub mod app;
 pub mod config;
+pub mod daemon;
 pub mod keygen;
 pub mod proxy;
 pub mod registry;
