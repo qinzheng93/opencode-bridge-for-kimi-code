@@ -2,8 +2,9 @@
 //! `stop` and `status` drive it through a pid file that lives next to the
 //! config file (`config.yaml` -> `config.pid`, with logs in `config.log`).
 //!
-//! The child is detached with `setsid` so it survives the terminal that
-//! launched it; an explicit `kill -HUP <pid>` still reloads the config.
+//! The child gets its own process group (`process_group(0)`) so terminal
+//! Ctrl-C and hangup never reach it; an explicit `kill -HUP <pid>` still
+//! reloads the config.
 
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
@@ -97,17 +98,12 @@ pub fn start(config_path: &str, serve_args: &[String]) -> ExitCode {
         .args(serve_args)
         .stdin(Stdio::null())
         .stdout(log)
-        .stderr(log_err);
-    // Detach from the controlling terminal so the daemon is not killed when
-    // the starting shell exits.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+        .stderr(log_err)
+        // Detach from the terminal's foreground process group so Ctrl-C and
+        // terminal hangup never reach the daemon (setpgid, not setsid: the
+        // stdio redirection above makes the session/controlling-tty difference
+        // irrelevant here, and this std API is safe).
+        .process_group(0);
 
     let mut child = match command.spawn() {
         Ok(child) => child,
