@@ -20,8 +20,8 @@ cargo build --release
 # 首次运行会自动在 ~/.config/ocbk/config.yaml 生成默认配置（目录不存在会自动创建），
 # 也可以手动创建：cp config.example.yaml ~/.config/ocbk/config.yaml
 # 写入上游 key（OpenCode Go 的 key）：
-./target/release/opencode-bridge set-key <上游 API key>
-./target/release/opencode-bridge serve --registry-protocols chat
+./target/release/ocbk set-key <上游 API key>
+./target/release/ocbk serve --registry-protocols chat
 ```
 
 首次运行如果配置不存在，`set-key` 会先在 `~/.config/ocbk/config.yaml` 生成一份（含自动生成的 `proxy_api_keys`）再写入 key，一步完成；也可以直接编辑该文件填 `upstream_api_key`。
@@ -87,18 +87,18 @@ registry 里发布给客户端的地址由 `listen` 推导，不会再和实际�
 Kimi Code 不在本机、或桥前面有反向代理时，用 `--host` 覆盖（可写 host、host:port 或完整 URL）：
 
 ```bash
-opencode-bridge serve -c config.yaml --host 192.168.1.10
-opencode-bridge serve -c config.yaml --host 192.168.1.10:9000
-opencode-bridge serve -c config.yaml --host https://bridge.example.com
+ocbk serve -c config.yaml --host 192.168.1.10
+ocbk serve -c config.yaml --host 192.168.1.10:9000
+ocbk serve -c config.yaml --host https://bridge.example.com
 ```
 
 ## 运维
 
-- **daemon 模式**：`opencode-bridge start` 后台启动并立即返回，`stop` 优雅停止（SIGTERM），`status` 查看状态，`restart` 等价于 stop + start。pid 和日志文件跟随配置文件放在同目录（默认 `~/.config/ocbk/config.yaml` → `~/.config/ocbk/config.pid` / `~/.config/ocbk/config.log`），多份配置可跑多个实例。`start` 接受 `serve` 的全部参数（`--host`、`--log-level`、`--registry-protocols`）。日志追加写入，需要轮转可配 logrotate。
+- **daemon 模式**：`ocbk start` 后台启动并立即返回，`stop` 优雅停止（SIGTERM），`status` 查看状态，`restart` 等价于 stop + start。pid 和日志文件跟随配置文件放在同目录（默认 `~/.config/ocbk/config.yaml` → `~/.config/ocbk/config.pid` / `~/.config/ocbk/config.log`），多份配置可跑多个实例。`start` 接受 `serve` 的全部参数（`--host`、`--log-level`、`--registry-protocols`）。日志追加写入，需要轮转可配 logrotate。
 - **热加载**：改完配置给进程发 `SIGHUP` 即可，无需重启（daemon 模式下 `kill -HUP $(cat ~/.config/ocbk/config.pid)`）。`proxy_api_keys` 立即生效；`upstream_timeout_seconds` 会重建连接池；`registry_metadata_url` / `registry_ttl_seconds` 在下一次刷新时生效。`listen` 和发布地址是启动时确定的，改了要重启。
 - **日志**：前台模式输出到 stderr，daemon 模式写入日志文件；本地时间，格式 `2026-10-17 02:31:40,211  INFO ...`；`--log-level debug|info|warning|error`。
-- **生成 key**：`opencode-bridge gen-key [COUNT] [--prefix sk-bridge-] [--json]`。
-- **写入上游 key**：`opencode-bridge set-key <KEY>` 把 OpenCode Go 的 key 写进 `upstream_api_key`（脱敏回显）；daemon 运行中会自动 SIGHUP 热加载，立即生效。
+- **生成 key**：`ocbk gen-key [COUNT] [--prefix sk-bridge-] [--json]`。
+- **写入上游 key**：`ocbk set-key <KEY>` 把 OpenCode Go 的 key 写进 `upstream_api_key`（脱敏回显）；daemon 运行中会自动 SIGHUP 热加载，立即生效。
 - **registry 缓存**：TTL 内直接返回内存缓存；刷新失败时回退到上一次成功的结果（再延长 60 秒），冷缓存且上游不可达时返回 503。模型缺少元数据或上下文窗口时会被跳过并记一条 WARN。
 - **`--registry-protocols`**：`chat,responses,anthropic` 的子集或 `all`（默认），只向 Kimi Code 发布选中的协议。
 

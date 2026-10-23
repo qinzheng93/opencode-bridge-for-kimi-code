@@ -10,7 +10,7 @@ name = "opencode_bridge"
 path = "src/lib.rs"
 
 [[bin]]
-name = "opencode-bridge"
+name = "ocbk"
 path = "src/main.rs"
 
 [dependencies]

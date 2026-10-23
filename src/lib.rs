@@ -48,7 +48,7 @@ pub mod proxy;
 pub mod registry;
 pub mod session;
 
-pub const APP: &str = "opencode-bridge";
+pub const APP: &str = "ocbk";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// reqwest's `Display` stops at "error sending request for url (...)", which
