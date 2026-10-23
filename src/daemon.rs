@@ -29,13 +29,13 @@ pub fn log_file_for(config_path: &str) -> PathBuf {
     path
 }
 
-fn read_pid(path: &Path) -> Option<i32> {
+pub fn read_pid(path: &Path) -> Option<i32> {
     let text = fs::read_to_string(path).ok()?;
     let pid: i32 = text.trim().parse().ok()?;
     (pid > 0).then_some(pid)
 }
 
-fn process_alive(pid: i32) -> bool {
+pub fn process_alive(pid: i32) -> bool {
     // kill(pid, 0) only probes: success or EPERM means the process exists.
     let result = unsafe { libc::kill(pid, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)

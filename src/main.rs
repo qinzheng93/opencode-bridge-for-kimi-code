@@ -11,8 +11,8 @@ use tracing_subscriber::fmt::time::ChronoLocal;
 
 use opencode_bridge::app::create_app;
 use opencode_bridge::config::{
-    default_config_path, load_config, load_or_bootstrap, public_base_url, Bootstrap, ConfigStore,
-    UPSTREAM_KEY_ENV,
+    default_config_path, load_config, load_or_bootstrap, public_base_url, write_config, Bootstrap,
+    ConfigStore, UPSTREAM_KEY_ENV,
 };
 use opencode_bridge::daemon;
 use opencode_bridge::keygen::{generate_api_key_with_prefix, DEFAULT_KEY_PREFIX};
@@ -43,6 +43,8 @@ enum Command {
     Status(ConfigArg),
     /// Restart a background bridge (stop, then start).
     Restart(StartArgs),
+    /// Store an OpenCode Go API key as upstream_api_key in the config.
+    SetKey(SetKeyArgs),
     /// Generate bridge API keys in the format the config expects.
     GenKey(GenKeyArgs),
 }
@@ -107,6 +109,17 @@ struct ConfigArg {
 }
 
 #[derive(Args)]
+struct SetKeyArgs {
+    /// The OpenCode Go API key to store as upstream_api_key
+    #[arg(value_name = "KEY")]
+    key: String,
+    /// Path to the YAML config file (default: $OPENCODE_BRIDGE_CONFIG, else
+    /// ~/.config/ocbk/config.yaml)
+    #[arg(short, long, value_name = "PATH")]
+    config: Option<String>,
+}
+
+#[derive(Args)]
 struct GenKeyArgs {
     /// Number of keys to generate
     #[arg(value_name = "COUNT", default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
@@ -133,6 +146,7 @@ async fn main() -> ExitCode {
         Command::Start(args) => run_start(&args.serve),
         Command::Stop(args) => daemon::stop(&resolve_config_path(args.config)),
         Command::Status(args) => daemon::status(&resolve_config_path(args.config)),
+        Command::SetKey(args) => run_set_key(&args),
         Command::Restart(args) => {
             let config = resolve_config_path(args.serve.config.clone());
             let code = daemon::stop(&config);
@@ -173,6 +187,67 @@ fn serve_extra_args(args: &ServeArgs) -> Vec<String> {
 fn run_start(args: &ServeArgs) -> ExitCode {
     let config = resolve_config_path(args.config.clone());
     daemon::start(&config, &serve_extra_args(args))
+}
+
+fn run_set_key(args: &SetKeyArgs) -> ExitCode {
+    let key = args.key.trim();
+    if key.is_empty() {
+        eprintln!("the API key must not be empty");
+        return ExitCode::from(2);
+    }
+    let config_path = resolve_config_path(args.config.clone());
+    let mut config = match load_or_bootstrap(&config_path) {
+        Ok(Bootstrap::Ready(config)) | Ok(Bootstrap::Created(config)) => config,
+        Err(error) => {
+            eprintln!("config error: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    config.upstream_api_key = key.to_string();
+    if let Err(error) = write_config(&config_path, &config) {
+        eprintln!("config error: {error}");
+        return ExitCode::from(2);
+    }
+    println!(
+        "updated upstream_api_key in {config_path} ({})",
+        mask_key(key)
+    );
+    reload_running_bridge(&config_path);
+    ExitCode::SUCCESS
+}
+
+/// `sk-…wxyz` for keys long enough to survive the trimming, `****` otherwise.
+fn mask_key(key: &str) -> String {
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() > 12 {
+        let head: String = chars[..8].iter().collect();
+        let tail: String = chars[chars.len() - 4..].iter().collect();
+        format!("{head}…{tail}")
+    } else {
+        "****".to_string()
+    }
+}
+
+/// SIGHUP the daemon when one is running so the new key takes effect at once.
+fn reload_running_bridge(config_path: &str) {
+    let pid_file = daemon::pid_file_for(config_path);
+    let Some(pid) = daemon::read_pid(&pid_file) else {
+        println!("no running bridge detected; start one to use the new key");
+        return;
+    };
+    if !daemon::process_alive(pid) {
+        println!("no running bridge detected; start one to use the new key");
+        return;
+    }
+    let signaled = unsafe { libc::kill(pid, libc::SIGHUP) };
+    if signaled == 0 {
+        println!("reloaded the running bridge (pid {pid})");
+    } else {
+        eprintln!(
+            "bridge is running (pid {pid}) but SIGHUP failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
 }
 
 fn run_gen_key(args: &GenKeyArgs) -> ExitCode {

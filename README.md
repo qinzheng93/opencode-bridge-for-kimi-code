@@ -19,11 +19,12 @@ OpenCode Go 要求每个推理请求携带稳定的 `x-opencode-session` 头来�
 cargo build --release
 # 首次运行会自动在 ~/.config/ocbk/config.yaml 生成默认配置（目录不存在会自动创建），
 # 也可以手动创建：cp config.example.yaml ~/.config/ocbk/config.yaml
-# 编辑配置：至少填 upstream_api_key（OpenCode Go 的 key）
+# 写入上游 key（OpenCode Go 的 key）：
+./target/release/opencode-bridge set-key <上游 API key>
 ./target/release/opencode-bridge serve --registry-protocols chat
 ```
 
-首次运行如果配置不存在，桥会在 `~/.config/ocbk/config.yaml` 生成一份（含自动生成的 `proxy_api_keys`）并以退出码 2 结束，提示你填上游 key 后重启。
+首次运行如果配置不存在，`set-key` 会先在 `~/.config/ocbk/config.yaml` 生成一份（含自动生成的 `proxy_api_keys`）再写入 key，一步完成；也可以直接编辑该文件填 `upstream_api_key`。
 
 启动横幅会打印一条导入命令，形如：
 
@@ -97,6 +98,7 @@ opencode-bridge serve -c config.yaml --host https://bridge.example.com
 - **热加载**：改完配置给进程发 `SIGHUP` 即可，无需重启（daemon 模式下 `kill -HUP $(cat ~/.config/ocbk/config.pid)`）。`proxy_api_keys` 立即生效；`upstream_timeout_seconds` 会重建连接池；`registry_metadata_url` / `registry_ttl_seconds` 在下一次刷新时生效。`listen` 和发布地址是启动时确定的，改了要重启。
 - **日志**：前台模式输出到 stderr，daemon 模式写入日志文件；本地时间，格式 `2026-10-17 02:31:40,211  INFO ...`；`--log-level debug|info|warning|error`。
 - **生成 key**：`opencode-bridge gen-key [COUNT] [--prefix sk-bridge-] [--json]`。
+- **写入上游 key**：`opencode-bridge set-key <KEY>` 把 OpenCode Go 的 key 写进 `upstream_api_key`（脱敏回显）；daemon 运行中会自动 SIGHUP 热加载，立即生效。
 - **registry 缓存**：TTL 内直接返回内存缓存；刷新失败时回退到上一次成功的结果（再延长 60 秒），冷缓存且上游不可达时返回 503。模型缺少元数据或上下文窗口时会被跳过并记一条 WARN。
 - **`--registry-protocols`**：`chat,responses,anthropic` 的子集或 `all`（默认），只向 Kimi Code 发布选中的协议。
 
