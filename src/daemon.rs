@@ -184,6 +184,32 @@ pub fn stop(config_path: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// SIGHUP the daemon recorded in the pid file, asking it to reload the config.
+/// Only daemons launched with `start` have a pid file; a foreground `serve`
+/// takes `kill -HUP <pid>` directly.
+pub fn reload(config_path: &str) -> ExitCode {
+    let pid_file = pid_file_for(config_path);
+    let Some(pid) = read_pid(&pid_file) else {
+        eprintln!("not running (no pid file; is the bridge running under `start`?)");
+        return ExitCode::from(1);
+    };
+    if !process_alive(pid) {
+        let _ = fs::remove_file(&pid_file);
+        eprintln!("not running (removed stale pid file)");
+        return ExitCode::from(1);
+    }
+    let signaled = unsafe { libc::kill(pid, libc::SIGHUP) };
+    if signaled != 0 {
+        eprintln!(
+            "cannot signal pid {pid}: {}",
+            std::io::Error::last_os_error()
+        );
+        return ExitCode::from(1);
+    }
+    println!("reloading (pid {pid})");
+    ExitCode::SUCCESS
+}
+
 pub fn status(config_path: &str) -> ExitCode {
     match read_pid(&pid_file_for(config_path)) {
         Some(pid) if process_alive(pid) => {

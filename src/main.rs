@@ -43,6 +43,8 @@ enum Command {
     Status(ConfigArg),
     /// Restart a background bridge (stop, then start).
     Restart(StartArgs),
+    /// Reload the config of a running background bridge (SIGHUP).
+    Reload(ConfigArg),
     /// Store an OpenCode Go API key as upstream_api_key in the config.
     SetKey(SetKeyArgs),
     /// Generate bridge API keys in the format the config expects.
@@ -147,6 +149,7 @@ async fn main() -> ExitCode {
         Command::Stop(args) => daemon::stop(&resolve_config_path(args.config)),
         Command::Status(args) => daemon::status(&resolve_config_path(args.config)),
         Command::SetKey(args) => run_set_key(&args),
+        Command::Reload(args) => daemon::reload(&resolve_config_path(args.config)),
         Command::Restart(args) => {
             let config = resolve_config_path(args.serve.config.clone());
             let code = daemon::stop(&config);

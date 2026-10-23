@@ -95,7 +95,7 @@ ocbk serve -c config.yaml --host https://bridge.example.com
 ## 运维
 
 - **daemon 模式**：`ocbk start` 后台启动并立即返回，`stop` 优雅停止（SIGTERM），`status` 查看状态，`restart` 等价于 stop + start。pid 和日志文件跟随配置文件放在同目录（默认 `~/.config/ocbk/config.yaml` → `~/.config/ocbk/config.pid` / `~/.config/ocbk/config.log`），多份配置可跑多个实例。`start` 接受 `serve` 的全部参数（`--host`、`--log-level`、`--registry-protocols`）。日志追加写入，需要轮转可配 logrotate。
-- **热加载**：改完配置给进程发 `SIGHUP` 即可，无需重启（daemon 模式下 `kill -HUP $(cat ~/.config/ocbk/config.pid)`）。`proxy_api_keys` 立即生效；`upstream_timeout_seconds` 会重建连接池；`registry_metadata_url` / `registry_ttl_seconds` 在下一次刷新时生效。`listen` 和发布地址是启动时确定的，改了要重启。
+- **热加载**：改完配置用 `ocbk reload`（daemon 模式）或对进程发 `SIGHUP`（前台模式 `kill -HUP <pid>`）即可，无需重启。`proxy_api_keys` 立即生效；`upstream_timeout_seconds` 会重建连接池；`registry_metadata_url` / `registry_ttl_seconds` 在下一次刷新时生效。`listen` 和发布地址是启动时确定的，改了要重启。
 - **日志**：前台模式输出到 stderr，daemon 模式写入日志文件；本地时间，格式 `2026-10-17 02:31:40,211  INFO ...`；`--log-level debug|info|warning|error`。
 - **生成 key**：`ocbk gen-key [COUNT] [--prefix sk-bridge-] [--json]`。
 - **写入上游 key**：`ocbk set-key <KEY>` 把 OpenCode Go 的 key 写进 `upstream_api_key`（脱敏回显）；daemon 运行中会自动 SIGHUP 热加载，立即生效。
