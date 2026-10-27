@@ -26,6 +26,8 @@ reqwest = { version = "0.12", default-features = false, features = [
     "stream",
     "json",
     "http2",
+    "brotli",
+    "gzip",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

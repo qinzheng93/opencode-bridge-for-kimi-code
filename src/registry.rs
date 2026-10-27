@@ -4,6 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
+use reqwest::header::{ETAG, IF_NONE_MATCH};
+use reqwest::StatusCode;
 use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
@@ -15,7 +18,10 @@ use crate::{APP, VERSION};
 const EXCLUDED_STATUSES: [&str; 2] = ["deprecated", "alpha"];
 
 const MIN_TTL_SECONDS: u64 = 60;
-const FETCH_TIMEOUT_SECONDS: u64 = 15;
+/// The roster is small; a slow answer is not worth waiting for.
+const ROSTER_TIMEOUT_SECONDS: u64 = 15;
+/// The metadata catalog is several megabytes uncompressed on a cold cache.
+const METADATA_TIMEOUT_SECONDS: u64 = 60;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -387,34 +393,76 @@ pub fn build_registry(
     Ok((Value::Object(registry), skipped))
 }
 
+/// A response body plus the validator needed to revalidate it later. `Bytes`
+/// keeps the raw catalog so a 304 refresh costs no parsing when the roster has
+/// not changed either.
+#[derive(Clone)]
+struct JsonBody {
+    bytes: Bytes,
+    etag: Option<String>,
+}
+
+impl JsonBody {
+    fn parse(&self) -> Result<Value, RegistryError> {
+        serde_json::from_slice(&self.bytes)
+            .map_err(|error| RegistryError::message(error.to_string()))
+    }
+}
+
+/// `None` means the server answered 304: the cached body is still current.
 async fn fetch_json(
     client: &reqwest::Client,
     url: &str,
     bearer: Option<&str>,
-) -> Result<Value, RegistryError> {
+    etag: Option<&str>,
+    timeout: Duration,
+) -> Result<Option<JsonBody>, RegistryError> {
     let mut request = client
         .get(url)
         .header("Accept", "application/json")
         .header("User-Agent", format!("{APP}/{VERSION}"))
-        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECONDS));
+        .timeout(timeout);
     if let Some(bearer) = bearer.filter(|bearer| !bearer.is_empty()) {
         request = request.header("Authorization", format!("Bearer {bearer}"));
+    }
+    if let Some(etag) = etag {
+        request = request.header(IF_NONE_MATCH, etag);
     }
     let response = request
         .send()
         .await
-        .map_err(|error| RegistryError::message(crate::error_chain(&error)))?
+        .map_err(|error| RegistryError::message(crate::error_chain(&error)))?;
+    if response.status() == StatusCode::NOT_MODIFIED {
+        return Ok(None);
+    }
+    let response = response
         .error_for_status()
         .map_err(|error| RegistryError::message(crate::error_chain(&error)))?;
-    response
-        .json()
+    let etag = response
+        .headers()
+        .get(ETAG)
+        .and_then(|value| value.to_str().ok())
+        .map(String::from);
+    let bytes = response
+        .bytes()
         .await
-        .map_err(|error| RegistryError::message(crate::error_chain(&error)))
+        .map_err(|error| RegistryError::message(crate::error_chain(&error)))?;
+    Ok(Some(JsonBody { bytes, etag }))
 }
 
 struct CacheEntry {
     data: Value,
+    catalog: JsonBody,
+    roster: BTreeSet<String>,
     expires: Instant,
+}
+
+struct Refreshed {
+    data: Value,
+    catalog: JsonBody,
+    roster: BTreeSet<String>,
+    skipped: Vec<String>,
+    not_modified: bool,
 }
 
 /// TTL-cached registry with stale-serve fallback on upstream failure.
@@ -455,38 +503,46 @@ impl Registry {
         }
 
         let cfg = self.store.get();
-        match self.fetch(client, &cfg).await {
-            Ok((registry, skipped)) => {
+        let previous = guard.as_ref();
+        match self.fetch(client, &cfg, previous).await {
+            Ok(refreshed) => {
                 let ttl = cfg.registry_ttl_seconds.max(MIN_TTL_SECONDS);
                 *guard = Some(CacheEntry {
-                    data: registry.clone(),
+                    data: refreshed.data.clone(),
+                    catalog: refreshed.catalog,
+                    roster: refreshed.roster,
                     expires: Instant::now() + Duration::from_secs(ttl),
                 });
-                let summary = match registry.as_object() {
-                    Some(providers) => providers
+                if refreshed.not_modified {
+                    tracing::debug!("registry metadata not modified; reusing cached copy");
+                } else {
+                    let summary = match refreshed.data.as_object() {
+                        Some(providers) => providers
+                            .iter()
+                            .map(|(name, provider)| {
+                                let count = provider
+                                    .get("models")
+                                    .and_then(|models| models.as_object())
+                                    .map_or(0, |models| models.len());
+                                format!("{name}={count}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        None => String::new(),
+                    };
+                    let sample = refreshed
+                        .skipped
                         .iter()
-                        .map(|(name, provider)| {
-                            let count = provider
-                                .get("models")
-                                .and_then(|models| models.as_object())
-                                .map_or(0, |models| models.len());
-                            format!("{name}={count}")
-                        })
+                        .take(20)
+                        .cloned()
                         .collect::<Vec<_>>()
-                        .join(", "),
-                    None => String::new(),
-                };
-                let sample = skipped
-                    .iter()
-                    .take(20)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                tracing::info!("registry refreshed: {summary}");
-                if !skipped.is_empty() {
-                    tracing::warn!("registry skipped models: {sample}");
+                        .join("; ");
+                    tracing::info!("registry refreshed: {summary}");
+                    if !refreshed.skipped.is_empty() {
+                        tracing::warn!("registry skipped models: {sample}");
+                    }
                 }
-                Ok(registry)
+                Ok(refreshed.data)
             }
             Err(error) => {
                 tracing::warn!(
@@ -512,22 +568,70 @@ impl Registry {
         &self,
         client: &reqwest::Client,
         cfg: &crate::config::BridgeConfig,
-    ) -> Result<(Value, Vec<String>), RegistryError> {
+        previous: Option<&CacheEntry>,
+    ) -> Result<Refreshed, RegistryError> {
         let roster_url = format!("{}{}/models", cfg.upstream_base_url, cfg.upstream_prefix());
         let upstream_key = cfg.effective_upstream_api_key();
+        let roster_timeout = Duration::from_secs(ROSTER_TIMEOUT_SECONDS);
+        let metadata_timeout = Duration::from_secs(METADATA_TIMEOUT_SECONDS);
         let (roster, catalog) = tokio::join!(
-            fetch_json(client, &roster_url, Some(&upstream_key)),
-            fetch_json(client, &cfg.registry_metadata_url, None),
+            fetch_json(
+                client,
+                &roster_url,
+                Some(&upstream_key),
+                None,
+                roster_timeout
+            ),
+            fetch_json(
+                client,
+                &cfg.registry_metadata_url,
+                None,
+                previous.and_then(|entry| entry.catalog.etag.as_deref()),
+                metadata_timeout,
+            ),
         );
-        let roster = roster?;
-        let catalog = catalog?;
-        build_registry(
-            &roster,
-            &catalog,
+
+        let roster_value = roster?
+            .ok_or_else(|| RegistryError::message("upstream /models answered 304"))?
+            .parse()?;
+        let roster = model_roster(&roster_value)?;
+
+        let (catalog, not_modified) = match catalog? {
+            Some(catalog) => (catalog, false),
+            None => {
+                let previous = previous.ok_or_else(|| {
+                    RegistryError::message("metadata answered 304 without a cached copy")
+                })?;
+                // The catalog did not move: reuse the built registry unless the
+                // entitlement roster itself changed.
+                if previous.roster == roster {
+                    return Ok(Refreshed {
+                        data: previous.data.clone(),
+                        catalog: previous.catalog.clone(),
+                        roster,
+                        skipped: Vec::new(),
+                        not_modified: true,
+                    });
+                }
+                (previous.catalog.clone(), true)
+            }
+        };
+
+        let catalog_value = catalog.parse()?;
+        let (registry, skipped) = build_registry(
+            &roster_value,
+            &catalog_value,
             &self.public_base_url,
             &cfg.api_key_env_name,
             self.protocols.as_ref(),
-        )
+        )?;
+        Ok(Refreshed {
+            data: registry,
+            catalog,
+            roster,
+            skipped,
+            not_modified,
+        })
     }
 }
 
@@ -876,5 +980,60 @@ mod tests {
             .keys()
             .collect();
         assert_eq!(ids, vec!["a", "b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn revalidates_metadata_with_the_cached_etag() {
+        use axum::http::{header, HeaderMap, HeaderValue, StatusCode as HttpStatus};
+        use axum::routing::get;
+
+        async fn catalog(headers: HeaderMap) -> (HttpStatus, HeaderMap, &'static str) {
+            let mut response_headers = HeaderMap::new();
+            response_headers.insert(header::ETAG, HeaderValue::from_static("\"v1\""));
+            // Both compression features must be negotiated: the catalog is
+            // ~14x smaller over the wire with brotli.
+            let negotiated = headers
+                .get(header::ACCEPT_ENCODING)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.contains("br") && value.contains("gzip"));
+            if !negotiated {
+                return (HttpStatus::NOT_ACCEPTABLE, response_headers, "");
+            }
+            let unchanged = headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|value| value.to_str().ok())
+                == Some("\"v1\"");
+            if unchanged {
+                return (HttpStatus::NOT_MODIFIED, response_headers, "");
+            }
+            (
+                HttpStatus::OK,
+                response_headers,
+                r#"{"opencode-go":{"models":{}}}"#,
+            )
+        }
+
+        let app = axum::Router::new().route("/catalog.json", get(catalog));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}/catalog.json");
+        let timeout = Duration::from_secs(5);
+
+        let fresh = fetch_json(&client, &url, None, None, timeout)
+            .await
+            .expect("first fetch")
+            .expect("200 body");
+        assert_eq!(fresh.etag.as_deref(), Some("\"v1\""));
+        assert!(fresh.parse().expect("json")["opencode-go"].is_object());
+
+        let revalidated = fetch_json(&client, &url, None, fresh.etag.as_deref(), timeout)
+            .await
+            .expect("second fetch");
+        assert!(revalidated.is_none(), "304 should reuse the cached body");
     }
 }
