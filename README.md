@@ -109,6 +109,17 @@ ocbk serve -c config.yaml --host https://bridge.example.com
 - 默认只监听 `127.0.0.1`。确实需要对外提供服务时，请自行加反代和 TLS，并用 `--host` 指定对外地址。
 - 客户端 key（`sk-bridge-...`）与上游 key 完全隔离；吊销只需从 `proxy_api_keys` 删掉再发 `SIGHUP`。
 
+## CI 与发布
+
+push 和 pull request 会自动运行格式检查、Clippy 和测试。推送 `v*` 版本标签会先在三个目标平台分别运行完整测试，再构建并发布 GitHub Release：
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+以 `v1.1.0` 为例，Release 提供 `ocbk-v1.1.0-linux-amd64.tar.gz`、`ocbk-v1.1.0-linux-arm64.tar.gz`、`ocbk-v1.1.0-macos-arm64.tar.gz` 和 `SHA256SUMS`。压缩包内含 `ocbk`、LICENSE 和 README。Linux 版本使用 musl 全静态链接；macOS 版本为 Apple Silicon 原生可执行文件，静态链接 Rust 和项目依赖，仅使用 Apple 系统运行库。
+
 ## 开发
 
 ```bash
