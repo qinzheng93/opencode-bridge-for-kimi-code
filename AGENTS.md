@@ -3,6 +3,7 @@
 ## Git 工作流
 
 - 按功能点拆分提交，每个提交单独跑过 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 后再提交。
+- 每次修改后根据变更重要度判断是否需要 bump 版本号；需要 bump 时自动创建对应的 `v<版本号>` tag。
 - 功能完成、验证通过后**自动 commit**，无需询问。
 - **不主动 push**；等用户明确通知后再推送。
 
