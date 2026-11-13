@@ -47,6 +47,8 @@ enum Command {
     Reload(ConfigArg),
     /// Store an OpenCode Go API key as upstream_api_key in the config.
     SetKey(SetKeyArgs),
+    /// Show OpenCode Go usage for the current upstream API key.
+    Usage(ConfigArg),
     /// Generate bridge API keys in the format the config expects.
     GenKey(GenKeyArgs),
 }
@@ -149,6 +151,7 @@ async fn main() -> ExitCode {
         Command::Stop(args) => daemon::stop(&resolve_config_path(args.config)),
         Command::Status(args) => daemon::status(&resolve_config_path(args.config)),
         Command::SetKey(args) => run_set_key(&args),
+        Command::Usage(args) => run_usage(args).await,
         Command::Reload(args) => daemon::reload(&resolve_config_path(args.config)),
         Command::Restart(args) => {
             let config = resolve_config_path(args.serve.config.clone());
@@ -217,6 +220,41 @@ fn run_set_key(args: &SetKeyArgs) -> ExitCode {
     );
     reload_running_bridge(&config_path);
     ExitCode::SUCCESS
+}
+
+async fn run_usage(args: ConfigArg) -> ExitCode {
+    let config_path = resolve_config_path(args.config);
+    let config = match load_config(&config_path) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config error: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let key = config.effective_upstream_api_key();
+    if key.is_empty() {
+        eprintln!(
+            "upstream_api_key is not configured; run `ocbk set-key <KEY>` or set {UPSTREAM_KEY_ENV}"
+        );
+        return ExitCode::from(2);
+    }
+
+    match opencode_bridge::usage::fetch(&key).await {
+        Ok(usage) => match serde_json::to_string_pretty(&usage) {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("cannot format usage response: {error}");
+                ExitCode::from(1)
+            }
+        },
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(1)
+        }
+    }
 }
 
 /// `sk-…wxyz` for keys long enough to survive the trimming, `****` otherwise.

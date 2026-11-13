@@ -47,6 +47,7 @@ pub mod keygen;
 pub mod proxy;
 pub mod registry;
 pub mod session;
+pub mod usage;
 
 pub const APP: &str = "ocbk";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
