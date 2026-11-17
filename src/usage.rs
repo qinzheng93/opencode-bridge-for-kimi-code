@@ -10,6 +10,12 @@ use crate::{APP, VERSION};
 pub const USAGE_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 const REQUEST_TIMEOUT_SECONDS: u64 = 30;
 const MAX_ERROR_BODY_CHARS: usize = 1024;
+const BAR_WIDTH: usize = 20;
+const WINDOWS: [(&str, &str); 3] = [
+    ("rolling", "Rolling (5h)"),
+    ("weekly", "Weekly"),
+    ("monthly", "Monthly"),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsageError {
@@ -24,6 +30,8 @@ pub enum UsageError {
     },
     #[error("usage endpoint returned invalid JSON: {0}")]
     Json(#[source] serde_json::Error),
+    #[error("usage response is missing a valid {0}")]
+    Schema(&'static str),
 }
 
 pub async fn fetch(api_key: &str) -> Result<Value, UsageError> {
@@ -60,6 +68,43 @@ async fn fetch_from(
         return Err(UsageError::Http { status, body });
     }
     serde_json::from_slice(&body).map_err(UsageError::Json)
+}
+
+pub fn render(usage: &Value) -> Result<String, UsageError> {
+    let windows = usage
+        .get("usage")
+        .and_then(Value::as_object)
+        .ok_or(UsageError::Schema("usage object"))?;
+    let mut output = String::from("OpenCode Go usage\n");
+    for (index, (key, label)) in WINDOWS.iter().enumerate() {
+        let window = windows
+            .get(*key)
+            .and_then(Value::as_object)
+            .ok_or(UsageError::Schema(key))?;
+        let Some(percent) = window.get("percent").and_then(Value::as_f64) else {
+            return Err(UsageError::Schema(key));
+        };
+        let percent_text = percent.to_string();
+        let filled = ((percent.clamp(0.0, 100.0) / 100.0) * BAR_WIDTH as f64).round() as usize;
+        let bar = format!("{}{}", "█".repeat(filled), "░".repeat(BAR_WIDTH - filled));
+        let status = window
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let resets = window
+            .get("resetsAt")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+
+        if index > 0 {
+            output.push('\n');
+        }
+        output.push_str(&format!(
+            "{label:<12} [{bar}] {percent_text:>6}% used\n{:13}status: {status} · resets: {resets}\n",
+            "",
+        ));
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -143,5 +188,69 @@ mod tests {
             .await
             .expect_err("invalid JSON");
         assert!(matches!(error, UsageError::Json(_)));
+    }
+
+    #[test]
+    fn renders_aligned_progress_bars_and_reset_times() {
+        let usage = json!({
+            "usage": {
+                "rolling": {
+                    "status": "ok",
+                    "percent": 0,
+                    "resetsAt": "2026-09-30T17:15:45.084Z"
+                },
+                "weekly": {
+                    "status": "ok",
+                    "percent": 50,
+                    "resetsAt": "2026-10-05T00:00:00.000Z"
+                },
+                "monthly": {
+                    "status": "ok",
+                    "percent": 100,
+                    "resetsAt": "2026-10-21T07:45:46.000Z"
+                }
+            }
+        });
+
+        assert_eq!(
+            render(&usage).expect("render"),
+            concat!(
+                "OpenCode Go usage\n",
+                "Rolling (5h) [░░░░░░░░░░░░░░░░░░░░]      0% used\n",
+                "             status: ok · resets: 2026-09-30T17:15:45.084Z\n",
+                "\n",
+                "Weekly       [██████████░░░░░░░░░░]     50% used\n",
+                "             status: ok · resets: 2026-10-05T00:00:00.000Z\n",
+                "\n",
+                "Monthly      [████████████████████]    100% used\n",
+                "             status: ok · resets: 2026-10-21T07:45:46.000Z\n",
+            )
+        );
+    }
+
+    #[test]
+    fn clamps_out_of_range_percentages_to_the_bar_width() {
+        let usage = json!({
+            "usage": {
+                "rolling": {"status": "ok", "percent": 125},
+                "weekly": {"status": "ok", "percent": -20},
+                "monthly": {"status": "ok", "percent": 50.5}
+            }
+        });
+        let output = render(&usage).expect("render");
+        assert!(output.contains("[████████████████████]    125% used"));
+        assert!(output.contains("[░░░░░░░░░░░░░░░░░░░░]    -20% used"));
+        assert!(output.contains("[██████████░░░░░░░░░░]   50.5% used"));
+    }
+
+    #[test]
+    fn rejects_a_missing_usage_window() {
+        let usage = json!({
+            "usage": {
+                "rolling": {"status": "ok", "percent": 1},
+                "weekly": {"status": "ok", "percent": 2}
+            }
+        });
+        assert!(matches!(render(&usage), Err(UsageError::Schema("monthly"))));
     }
 }

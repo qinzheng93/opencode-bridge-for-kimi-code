@@ -48,7 +48,7 @@ enum Command {
     /// Store an OpenCode Go API key as upstream_api_key in the config.
     SetKey(SetKeyArgs),
     /// Show OpenCode Go usage for the current upstream API key.
-    Usage(ConfigArg),
+    Usage(UsageArgs),
     /// Generate bridge API keys in the format the config expects.
     GenKey(GenKeyArgs),
 }
@@ -110,6 +110,15 @@ struct ConfigArg {
     /// ~/.config/ocbk/config.yaml)
     #[arg(short, long, value_name = "PATH")]
     config: Option<String>,
+}
+
+#[derive(Args)]
+struct UsageArgs {
+    #[command(flatten)]
+    config: ConfigArg,
+    /// Print the upstream JSON verbatim instead of the quota table
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -222,8 +231,8 @@ fn run_set_key(args: &SetKeyArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-async fn run_usage(args: ConfigArg) -> ExitCode {
-    let config_path = resolve_config_path(args.config);
+async fn run_usage(args: UsageArgs) -> ExitCode {
+    let config_path = resolve_config_path(args.config.config);
     let config = match load_config(&config_path) {
         Ok(config) => config,
         Err(error) => {
@@ -240,16 +249,23 @@ async fn run_usage(args: ConfigArg) -> ExitCode {
     }
 
     match opencode_bridge::usage::fetch(&key).await {
-        Ok(usage) => match serde_json::to_string_pretty(&usage) {
-            Ok(json) => {
-                println!("{json}");
-                ExitCode::SUCCESS
+        Ok(usage) => {
+            let rendered = if args.json {
+                serde_json::to_string_pretty(&usage).map_err(|error| error.to_string())
+            } else {
+                opencode_bridge::usage::render(&usage).map_err(|error| error.to_string())
+            };
+            match rendered {
+                Ok(output) => {
+                    println!("{}", output.trim_end_matches('\n'));
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("cannot format usage response: {error}");
+                    ExitCode::from(1)
+                }
             }
-            Err(error) => {
-                eprintln!("cannot format usage response: {error}");
-                ExitCode::from(1)
-            }
-        },
+        }
         Err(error) => {
             eprintln!("{error}");
             ExitCode::from(1)
