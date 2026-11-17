@@ -1,7 +1,9 @@
 //! OpenCode Go subscription usage query.
 
+use std::fmt::Display;
 use std::time::Duration;
 
+use chrono::{DateTime, Local, TimeZone};
 use reqwest::header::ACCEPT;
 use serde_json::Value;
 
@@ -71,6 +73,14 @@ async fn fetch_from(
 }
 
 pub fn render(usage: &Value) -> Result<String, UsageError> {
+    render_in_timezone(usage, &Local)
+}
+
+fn render_in_timezone<Tz>(usage: &Value, timezone: &Tz) -> Result<String, UsageError>
+where
+    Tz: TimeZone,
+    Tz::Offset: Display,
+{
     let windows = usage
         .get("usage")
         .and_then(Value::as_object)
@@ -94,7 +104,8 @@ pub fn render(usage: &Value) -> Result<String, UsageError> {
         let resets = window
             .get("resetsAt")
             .and_then(Value::as_str)
-            .unwrap_or("unknown");
+            .map(|timestamp| format_timestamp(timestamp, timezone))
+            .unwrap_or_else(|| "unknown".to_string());
 
         if index > 0 {
             output.push('\n');
@@ -107,11 +118,26 @@ pub fn render(usage: &Value) -> Result<String, UsageError> {
     Ok(output)
 }
 
+fn format_timestamp<Tz>(timestamp: &str, timezone: &Tz) -> String
+where
+    Tz: TimeZone,
+    Tz::Offset: Display,
+{
+    DateTime::parse_from_rfc3339(timestamp)
+        .map(|time| {
+            time.with_timezone(timezone)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|_| timestamp.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::{HeaderMap, StatusCode};
     use axum::routing::get;
     use axum::Router;
+    use chrono::FixedOffset;
     use serde_json::json;
 
     use super::*;
@@ -212,18 +238,19 @@ mod tests {
             }
         });
 
+        let timezone = FixedOffset::east_opt(8 * 60 * 60).expect("UTC+8");
         assert_eq!(
-            render(&usage).expect("render"),
+            render_in_timezone(&usage, &timezone).expect("render"),
             concat!(
                 "OpenCode Go usage\n",
                 "Rolling (5h) [░░░░░░░░░░░░░░░░░░░░]      0% used\n",
-                "             status: ok · resets: 2026-09-30T17:15:45.084Z\n",
+                "             status: ok · resets: 2026-10-01 01:15:45\n",
                 "\n",
                 "Weekly       [██████████░░░░░░░░░░]     50% used\n",
-                "             status: ok · resets: 2026-10-05T00:00:00.000Z\n",
+                "             status: ok · resets: 2026-10-05 08:00:00\n",
                 "\n",
                 "Monthly      [████████████████████]    100% used\n",
-                "             status: ok · resets: 2026-10-21T07:45:46.000Z\n",
+                "             status: ok · resets: 2026-10-21 15:45:46\n",
             )
         );
     }

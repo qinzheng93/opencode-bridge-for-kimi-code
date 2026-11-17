@@ -99,7 +99,7 @@ ocbk serve -c config.yaml --host https://bridge.example.com
 - **日志**：前台模式输出到 stderr，daemon 模式写入日志文件；本地时间，格式 `2026-10-17 02:31:40,211  INFO ...`；`--log-level debug|info|warning|error`。
 - **生成 key**：`ocbk gen-key [COUNT] [--prefix sk-bridge-] [--json]`。
 - **写入上游 key**：`ocbk set-key <KEY>` 把 OpenCode Go 的 key 写进 `upstream_api_key`（脱敏回显）；daemon 运行中会自动 SIGHUP 热加载，立即生效。
-- **查询用量**：`ocbk usage [-c <PATH>] [--json]` 使用当前生效的上游 key 查询 OpenCode Go 额度；默认用进度条展示滚动、每周和每月用量及重置时间，`--json` 输出完整的上游 JSON。`OPENCODE_BRIDGE_UPSTREAM_API_KEY` 覆盖仍然生效。
+- **查询用量**：`ocbk usage [-c <PATH>] [--json]` 使用当前生效的上游 key 查询 OpenCode Go 额度；默认用进度条展示滚动、每周和每月用量，重置时间按本地时区显示为 `YYYY-MM-DD HH:MM:SS`；`--json` 输出完整的上游 JSON。`OPENCODE_BRIDGE_UPSTREAM_API_KEY` 覆盖仍然生效。
 - **registry 缓存**：TTL 内直接返回内存缓存；刷新失败时回退到上一次成功的结果（再延长 60 秒），冷缓存且上游不可达时返回 503。元数据源支持 `ETag` 时用 `If-None-Match` 条件刷新，未变更（304）就直接复用缓存，不重新下载；HTTP 压缩自动协商 br/gzip（`models.opencode.ai/api.json` 原始约 5.9MB，brotli 后约 0.4MB）。模型缺少元数据或上下文窗口时会被跳过并记一条 WARN。
 - **`--registry-protocols`**：`chat,responses,anthropic` 的子集或 `all`（默认），只向 Kimi Code 发布选中的协议。
 
@@ -114,11 +114,11 @@ ocbk serve -c config.yaml --host https://bridge.example.com
 push 和 pull request 会自动运行格式检查、Clippy 和测试。推送 `v*` 版本标签会先在三个目标平台分别运行完整测试，再构建并发布 GitHub Release：
 
 ```bash
-git tag v1.3.0
-git push origin v1.3.0
+git tag v1.3.1
+git push origin v1.3.1
 ```
 
-以 `v1.3.0` 为例，Release 提供 `ocbk-v1.3.0-linux-amd64.tar.gz`、`ocbk-v1.3.0-linux-arm64.tar.gz`、`ocbk-v1.3.0-macos-arm64.tar.gz` 和 `SHA256SUMS`。压缩包内含 `ocbk`、LICENSE 和 README。Linux 版本使用 musl 全静态链接；macOS 版本为 Apple Silicon 原生可执行文件，静态链接 Rust 和项目依赖，仅使用 Apple 系统运行库。
+以 `v1.3.1` 为例，Release 提供 `ocbk-v1.3.1-linux-amd64.tar.gz`、`ocbk-v1.3.1-linux-arm64.tar.gz`、`ocbk-v1.3.1-macos-arm64.tar.gz` 和 `SHA256SUMS`。压缩包内含 `ocbk`、LICENSE 和 README。Linux 版本使用 musl 全静态链接；macOS 版本为 Apple Silicon 原生可执行文件，静态链接 Rust 和项目依赖，仅使用 Apple 系统运行库。
 
 ## 开发
 

@@ -1,6 +1,6 @@
 [package]
 name = "opencode-bridge"
-version = "1.3.0"
+version = "1.3.1"
 edition = "2021"
 description = "Kimi Code -> OpenCode Go API bridge: publishes its own API key, injects a stable x-opencode-session header without breaking upstream KV cache"
 license = "MIT"
@@ -17,6 +17,7 @@ path = "src/main.rs"
 axum = "0.8"
 bytes = "1"
 base64 = "0.23"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 getrandom = "0.4"
